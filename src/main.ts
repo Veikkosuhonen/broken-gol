@@ -97,30 +97,39 @@ async function main() {
 
   const uniformBuffer = device.createBuffer({
     label: "uniforms buffer",
-    size: 4,
+    size: 4 * 6,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   });
 
   function createBindGroup(textureView: GPUTextureView) {
-    console.log(bindGroupLayout);
     return device.createBindGroup({
       layout: bindGroupLayout,
       entries: [
         { binding: 0, resource: sampler },
         { binding: 1, resource: textureView },
-        { binding: 2, resource: uniformBuffer },
+        { binding: 2, resource: { buffer: uniformBuffer } },
       ],
     });
   }
 
-  const uniformValues = new Float32Array([1]);
+  const uniformValues = new Float32Array([1, 1, 0, 0, 0]);
 
   let frameCount = 0;
 
+  let mouseX = 0;
+  let mouseY = 0;
+
+  window.addEventListener("mousemove", (event) => {
+    mouseX = event.clientX / window.innerWidth;
+    mouseY = event.clientY / window.innerHeight;
+  });
+
   function render() {
     uniformValues[0] = canvasElement.width;
-    // uniformValues[1] = canvasElement.height;
-    // uniformValues[2] = performance.now() / 1000;
+    uniformValues[1] = canvasElement.height;
+    uniformValues[2] = mouseX;
+    uniformValues[3] = mouseY;
+    uniformValues[4] = frameCount;
 
     device.queue.writeBuffer(uniformBuffer, 0, uniformValues);
 
@@ -170,9 +179,7 @@ async function main() {
     render();
   }
 
-  render();
-
-  // animationFrame();
+  animationFrame();
 }
 
 main();

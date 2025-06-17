@@ -1,5 +1,6 @@
 struct Uniforms {
-  // resolution : vec2f,
+  resolution : vec2f,
+  mouse : vec2f,
   time : f32
 }
 
@@ -20,11 +21,9 @@ struct Uniforms {
   return vec4f(pos[vertexIndex], 0, 1);
 }
 
-const RES = vec2f(1000.0, 1000.0);
-
 @fragment fn textureFs(@builtin(position) fragCoord : vec4f) -> @location(0) vec4f {
-  let uv = fragCoord.xy / RES;
-  let e = vec3f(-1.0, 0.0, 1.0) / RES.x;
+  let uv = fragCoord.xy / uniforms.resolution;
+  let e = vec3f(-1.0, 0.0, 1.0) / uniforms.resolution.xxy;
 
   var current = textureSample(dataTexture, dataSampler, uv).x;
 
@@ -39,7 +38,7 @@ const RES = vec2f(1000.0, 1000.0);
   sum += textureSample(dataTexture, dataSampler, uv + e.zy).x;
   sum += textureSample(dataTexture, dataSampler, uv + e.zz).x;
 
-  if (uv.y < 0.01 && uv.x < 0.01) {
+  if (distance(uniforms.mouse, uv) < 0.01) {
     current = 1.0;
   } else if (current > 0.5) {
     if (sum < 2 || sum > 3) {
@@ -50,6 +49,8 @@ const RES = vec2f(1000.0, 1000.0);
   } else {
     if (sum > 2 && sum < 4) {
       current = 1.0;
+    } else {
+      current = 0.0;
     }
   }
 
@@ -57,6 +58,6 @@ const RES = vec2f(1000.0, 1000.0);
 }
 
 @fragment fn screenFs(@builtin(position) fragCoord : vec4f) -> @location(0) vec4f {
-  let uv = fragCoord.xy / RES; // uniforms.resolution;
+  let uv = fragCoord.xy / uniforms.resolution;// uniforms.resolution;
   return textureSample(dataTexture, dataSampler, uv);
 }
