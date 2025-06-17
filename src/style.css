@@ -1,0 +1,11 @@
+body {
+    margin: 0;
+    padding: 0;
+    font-family: Arial, sans-serif;
+}
+
+canvas {
+    display: block; /* make the canvas act like a block   */
+    width: 100%; /* make the canvas fill its container */
+    height: 100%;
+}
