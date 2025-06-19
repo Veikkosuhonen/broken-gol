@@ -25,9 +25,13 @@ struct Uniforms {
   let uv = fragCoord.xy / uniforms.resolution;
   let e = vec3f(-1.0, 0.0, 1.0) / uniforms.resolution.xxy;
 
-  var current = textureSample(dataTexture, dataSampler, uv).x;
+  var currentSample = textureSample(dataTexture, dataSampler, uv);
+  var current = currentSample.x;
+  var lifetime = currentSample.y + 0.005;
 
   var sum = 0.0;
+
+  var isNew = 0.0;
 
   sum += textureSample(dataTexture, dataSampler, uv + e.xx).x;
   sum += textureSample(dataTexture, dataSampler, uv + e.xy).x;
@@ -40,6 +44,7 @@ struct Uniforms {
 
   if (distance(uniforms.mouse, uv) < 0.01) {
     current = 1.0;
+    isNew = 1.0;
   } else if (current > 0.5) {
     if (sum < 2 || sum > 3) {
       current = 0.0;
@@ -49,15 +54,21 @@ struct Uniforms {
   } else {
     if (sum > 2 && sum < 4) {
       current = 1.0;
+      lifetime = 0.0;
+      isNew = 1.0;
     } else {
       current = 0.0;
     }
   }
 
-  return vec4f(current, current, current, 1.0);
+  return vec4f(current, lifetime, isNew, 1.0);
 }
 
 @fragment fn screenFs(@builtin(position) fragCoord : vec4f) -> @location(0) vec4f {
   let uv = fragCoord.xy / uniforms.resolution;// uniforms.resolution;
-  return textureSample(dataTexture, dataSampler, uv);
+  var sample = textureSample(dataTexture, dataSampler, uv);
+  var state = sample.x;
+  var isNew = sample.z;
+  var youth = 0.1 / (sample.y + 0.01);
+  return vec4f(state, isNew, youth, 1.0);
 }
