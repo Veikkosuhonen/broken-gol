@@ -1,3 +1,5 @@
+enable f16;
+
 struct Uniforms {
   resolution : vec2f,
   mouse : vec2f,

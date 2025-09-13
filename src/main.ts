@@ -1,5 +1,8 @@
 import "./style.css";
-import shader from "./shader.wgsl?raw";
+import shaderCode from "./shader.wgsl?raw";
+import { createTimestampQueries } from "./query";
+import { createShader } from "./shader";
+
 // @ts-expect-error
 // import slang from "./shader.slang";
 
@@ -8,14 +11,34 @@ import shader from "./shader.wgsl?raw";
 async function main() {
   const infoElement = document.querySelector<HTMLPreElement>("#info")!;
   const canvasElement = document.querySelector<HTMLCanvasElement>("#canvas")!;
-  const canvasSize = [canvasElement.width, canvasElement.height];
+
+  const observer = new ResizeObserver((entries) => {
+    for (const entry of entries) {
+      const canvas = entry.target as HTMLCanvasElement;
+      const width = entry.contentBoxSize[0].inlineSize;
+      const height = entry.contentBoxSize[0].blockSize;
+      canvas.width = Math.max(
+        1,
+        Math.min(width, device.limits.maxTextureDimension2D),
+      );
+      canvas.height = Math.max(
+        1,
+        Math.min(height, device.limits.maxTextureDimension2D),
+      );
+    }
+  });
+  observer.observe(canvasElement);
+
+  canvasElement.width = window.innerWidth;
+  canvasElement.height = window.innerHeight;
+  const canvasSize = [window.innerWidth, window.innerHeight];
 
   const adapter = await navigator.gpu.requestAdapter({
     powerPreference: "high-performance",
   });
 
   const device = await adapter!.requestDevice({
-    requiredFeatures: ["timestamp-query"],
+    requiredFeatures: ["timestamp-query", "shader-f16"],
   });
 
   const context = canvasElement.getContext("webgpu")!;
@@ -24,16 +47,15 @@ async function main() {
   }
 
   const presentationFormat = navigator.gpu.getPreferredCanvasFormat();
+  console.log(presentationFormat);
   context.configure({
     device,
     format: presentationFormat,
     usage: GPUTextureUsage.RENDER_ATTACHMENT,
   });
 
-  const module = device.createShaderModule({
-    label: "shaders",
-    code: shader,
-  });
+  const shader = createShader(device, shaderCode);
+  console.log(shader.defs);
 
   function createPingPongTexture() {
     return device.createTexture({
@@ -44,8 +66,8 @@ async function main() {
     });
   }
 
-  let textureA = createPingPongTexture();
-  let textureB = createPingPongTexture();
+  const textureA = createPingPongTexture();
+  const textureB = createPingPongTexture();
   let readTexture = textureA;
   let writeTexture = textureB;
 
@@ -67,11 +89,11 @@ async function main() {
       bindGroupLayouts: [bindGroupLayout],
     }),
     vertex: {
-      module,
+      module: shader.module,
       entryPoint: "fsQuadVS",
     },
     fragment: {
-      module,
+      module: shader.module,
       entryPoint: "textureFs",
       targets: [{ format: presentationFormat }],
     },
@@ -88,11 +110,11 @@ async function main() {
       bindGroupLayouts: [bindGroupLayout],
     }),
     vertex: {
-      module,
+      module: shader.module,
       entryPoint: "fsQuadVS",
     },
     fragment: {
-      module,
+      module: shader.module,
       entryPoint: "screenFs",
       targets: [{ format: presentationFormat }],
     },
@@ -115,35 +137,21 @@ async function main() {
     });
   }
 
+  const queries = createTimestampQueries({ device, count: 2 });
+
   const uniformValues = new Float32Array([1, 1, 0, 0, 0]);
 
   let mouseX = 0;
   let mouseY = 0;
 
   window.addEventListener("mousemove", (event) => {
-    mouseX = event.clientX / window.innerWidth;
-    mouseY = event.clientY / window.innerHeight;
-  });
-
-  const querySet = device.createQuerySet({
-    type: "timestamp",
-    count: 4,
-  });
-
-  const queryResolveBuffer = device.createBuffer({
-    size: querySet.count * 8,
-    usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC,
-  });
-
-  const queryResultBuffer = device.createBuffer({
-    size: queryResolveBuffer.size,
-    usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    const rect = canvasElement.getBoundingClientRect();
+    mouseX = (event.clientX - rect.left) / rect.width;
+    mouseY = (event.clientY - rect.top) / rect.height; // Flip Y coordinate
   });
 
   let frameCount = 0;
   let startTime = performance.now();
-  let gpuTime0 = 0;
-  let gpuTime1 = 0;
 
   function render() {
     const jsTimeStart = performance.now();
@@ -168,11 +176,7 @@ async function main() {
           storeOp: "store",
         },
       ],
-      timestampWrites: {
-        querySet,
-        beginningOfPassWriteIndex: 0,
-        endOfPassWriteIndex: 1,
-      },
+      timestampWrites: queries.timeStampWrites[0],
     });
     texturePass.setPipeline(texturePipeline);
     texturePass.setBindGroup(0, createBindGroup(readTexture.createView()));
@@ -189,39 +193,17 @@ async function main() {
           storeOp: "store",
         },
       ],
-      timestampWrites: {
-        querySet,
-        beginningOfPassWriteIndex: 2,
-        endOfPassWriteIndex: 3,
-      },
+      timestampWrites: queries.timeStampWrites[1],
     });
     screenPass.setPipeline(screenPipeline);
     screenPass.setBindGroup(0, createBindGroup(writeTexture.createView()));
     screenPass.draw(3);
     screenPass.end();
 
-    encoder.resolveQuerySet(querySet, 0, querySet.count, queryResolveBuffer, 0);
-    if (queryResultBuffer.mapState === "unmapped") {
-      encoder.copyBufferToBuffer(
-        queryResolveBuffer,
-        0,
-        queryResultBuffer,
-        0,
-        queryResultBuffer.size,
-      );
-    }
+    queries.resolve(encoder);
 
     const commandBuffer = encoder.finish();
     device.queue.submit([commandBuffer]);
-
-    if (queryResultBuffer.mapState === "unmapped") {
-      queryResultBuffer.mapAsync(GPUMapMode.READ).then(() => {
-        const times = new BigInt64Array(queryResultBuffer.getMappedRange());
-        gpuTime0 = Number(times[1] - times[0]) / 1e6;
-        gpuTime1 = Number(times[3] - times[2]) / 1e6;
-        queryResultBuffer.unmap();
-      });
-    }
 
     [readTexture, writeTexture] = [writeTexture, readTexture];
     frameCount++;
@@ -230,7 +212,10 @@ async function main() {
     const frameTime = now - startTime;
     const frameRate = 1000 / frameTime;
     startTime = now;
-    infoElement.textContent = `FPS: ${frameRate.toFixed(2)} | JS Time: ${jsTime.toFixed(2)}ms | Frame Time: ${frameTime.toFixed(2)}ms | GPU Time: ${gpuTime0.toFixed(2)}ms + ${gpuTime1.toFixed(2)}ms`;
+
+    queries.read().then(([gpuTime0, gpuTime1]) => {
+      infoElement.textContent = `FPS: ${frameRate.toFixed(2)} | JS Time: ${jsTime.toFixed(2)}ms | Frame Time: ${frameTime.toFixed(2)}ms | GPU Time: ${gpuTime0.toFixed(2)}ms + ${gpuTime1.toFixed(2)}ms`;
+    });
   }
 
   function animationFrame() {
